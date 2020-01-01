@@ -395,7 +395,7 @@ static int CompileGLSLtoSPIRV( const char* filename, const idStr& dataGLSL, cons
 }
 #else
 
-#include <glslang/public/ShaderLang.h>
+#include <glslang/Public/ShaderLang.h>
 #include <glslang/Include/ResourceLimits.h>
 #include <SPIRV/GlslangToSpv.h>
 #include <StandAlone/DirStackFileIncluder.h>
