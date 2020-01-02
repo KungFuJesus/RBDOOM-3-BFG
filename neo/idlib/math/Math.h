@@ -691,8 +691,12 @@ ID_INLINE void idMath::SinCos( float a, float& s, float& c )
 	}
 #else
 	// DG: non-MSVC version
+#ifdef _WIN32
 	s = sinf( a );
 	c = cosf( a );
+#else
+    sincosf(a, &s, &c);
+#endif
 	// DG end
 #endif
 }
