@@ -1481,16 +1481,19 @@ ID_INLINE void idMatX::Multiply( idVecX& dst, const idVecX& vec ) const
 	const float* vPtr = vec.ToFloatPtr();
 	float* dstPtr = dst.ToFloatPtr();
 	float* temp = ( float* )_alloca16( numRows * sizeof( float ) );
+    #pragma omp simd
 	for( int i = 0; i < numRows; i++ )
 	{
-		float sum = mPtr[0] * vPtr[0];
-		for( int j = 1; j < numColumns; j++ )
+		float sum = 0.0f;
+        #pragma omp simd reduction(+:sum)
+		for( int j = 0; j < numColumns; j++ )
 		{
 			sum += mPtr[j] * vPtr[j];
 		}
 		temp[i] = sum;
 		mPtr += numColumns;
 	}
+    #pragma omp simd
 	for( int i = 0; i < numRows; i++ )
 	{
 		dstPtr[i] = temp[i];
@@ -1509,16 +1512,19 @@ ID_INLINE void idMatX::MultiplyAdd( idVecX& dst, const idVecX& vec ) const
 	const float* vPtr = vec.ToFloatPtr();
 	float* dstPtr = dst.ToFloatPtr();
 	float* temp = ( float* )_alloca16( numRows * sizeof( float ) );
+    #pragma omp simd
 	for( int i = 0; i < numRows; i++ )
 	{
-		float sum = mPtr[0] * vPtr[0];
-		for( int j = 1; j < numColumns; j++ )
+		float sum = 0.0f;
+        #pragma omp simd reduction(+:sum)
+		for( int j = 0; j < numColumns; j++ )
 		{
 			sum += mPtr[j] * vPtr[j];
 		}
 		temp[i] = dstPtr[i] + sum;
 		mPtr += numColumns;
 	}
+    #pragma omp simd
 	for( int i = 0; i < numRows; i++ )
 	{
 		dstPtr[i] = temp[i];
@@ -1537,9 +1543,11 @@ ID_INLINE void idMatX::MultiplySub( idVecX& dst, const idVecX& vec ) const
 	const float* vPtr = vec.ToFloatPtr();
 	float* dstPtr = dst.ToFloatPtr();
 	float* temp = ( float* )_alloca16( numRows * sizeof( float ) );
+    #pragma omp simd
 	for( int i = 0; i < numRows; i++ )
 	{
 		float sum = mPtr[0] * vPtr[0];
+        #pragma omp simd reduction(+:sum)
 		for( int j = 1; j < numColumns; j++ )
 		{
 			sum += mPtr[j] * vPtr[j];
@@ -1547,6 +1555,7 @@ ID_INLINE void idMatX::MultiplySub( idVecX& dst, const idVecX& vec ) const
 		temp[i] = dstPtr[i] - sum;
 		mPtr += numColumns;
 	}
+    #pragma omp simd
 	for( int i = 0; i < numRows; i++ )
 	{
 		dstPtr[i] = temp[i];
@@ -1657,7 +1666,7 @@ ID_INLINE void idMatX::Multiply( idMatX& dst, const idMatX& a ) const
 		for( int j = 0; j < l; j++ )
 		{
 			const float* m2Ptr = a.ToFloatPtr() + j;
-			float sum = m1Ptr[0] * m2Ptr[0];
+            float sum = m1Ptr[0] * m2Ptr[0];
 			for( int n = 1; n < numColumns; n++ )
 			{
 				m2Ptr += l;

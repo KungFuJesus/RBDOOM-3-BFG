@@ -35,6 +35,10 @@ If you have questions concerning this license or the applicable additional terms
 #include <ShaderMake/ShaderBlob.h>
 #include <sys/DeviceManager.h>
 
+#if defined(USE_INTRINSICS_NEON)
+#include <arm_neon.h>
+#endif
+
 
 /*
 ========================
@@ -344,6 +348,20 @@ void idRenderProgManager::SetUniformValue( const renderParm_t rp, const float va
 {
 	bool rpChanged = false;
 
+#if defined(USE_INTRINSICS_NEON)
+    const float32x4_t uniforms_old = vld1q_f32(uniforms[rp].ToFloatPtr());
+    float32x4_t val_v = vld1q_f32(value);
+    /* Quickly check for a delta */
+    uint32x4_t diff = veorq_u32(vreinterpretq_u32_f32(val_v),
+                                vreinterpretq_u32_f32(uniforms_old));
+
+    uint32_t anyDiff = vaddvq_u32(diff);
+    rpChanged = anyDiff;
+
+    if (rpChanged) {
+        vst1q_f32(uniforms[rp].ToFloatPtr(), val_v);
+    }
+#else
 	for( int i = 0; i < 4; i++ )
 	{
 		if( uniforms[rp][i] != value[i] )
@@ -352,13 +370,16 @@ void idRenderProgManager::SetUniformValue( const renderParm_t rp, const float va
 			rpChanged = true;
 		}
 	}
+#endif
+
 
 	if( rpChanged )
 	{
+        const auto *idxPtr = renderParmLayoutTypes[rp].Ptr();
 		for( int i = 0; i < renderParmLayoutTypes[rp].Num(); i++ )
 		{
 			// SRS - set flag if uniforms changed for associated binding layout types
-			uniformsChanged[renderParmLayoutTypes[rp][i]] = true;
+			uniformsChanged[idxPtr[i]] = true;
 		}
 	}
 }
