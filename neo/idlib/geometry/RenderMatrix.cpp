@@ -37,6 +37,10 @@ If you have questions concerning this license or the applicable additional terms
 #include "../bv/Bounds.h"
 #include "RenderMatrix.h"
 
+#if defined(USE_INTRINSICS_NEON)
+#include <arm_neon.h>
+#endif
+
 // FIXME:	it would be nice if all render matrices were 16-byte aligned
 //			so there is no need for unaligned loads and stores everywhere
 
@@ -968,7 +972,9 @@ void idRenderMatrix::Transpose( const idRenderMatrix& src, idRenderMatrix& out )
 	_mm_storeu_ps( out.m + 1 * 4, t1 );
 	_mm_storeu_ps( out.m + 2 * 4, t2 );
 	_mm_storeu_ps( out.m + 3 * 4, t3 );
-
+#elif defined(USE_INTRINSICS_NEON)
+    float32x4x4_t in_v = vld4q_f32(src.m);
+    vst1q_f32_x4(out.m, in_v);
 #else
 	out.m[ 0] = src.m[ 0];
 	out.m[ 1] = src.m[ 4];
@@ -1031,7 +1037,31 @@ void idRenderMatrix::Multiply( const idRenderMatrix& a, const idRenderMatrix& b,
 	_mm_storeu_ps( out.m + 1 * 4, t1 );
 	_mm_storeu_ps( out.m + 2 * 4, t2 );
 	_mm_storeu_ps( out.m + 3 * 4, t3 );
+#elif defined(USE_INTRINSICS_NEON)
+    float32x4x4_t a_v = vld1q_f32_x4(a.m);
+    float32x4x4_t b_v = vld1q_f32_x4(b.m);
+    
+    float32x4_t r0 = vmulq_laneq_f32(b_v.val[0], a_v.val[0], 0);
+    float32x4_t r1 = vmulq_laneq_f32(b_v.val[0], a_v.val[1], 0);
+    float32x4_t r2 = vmulq_laneq_f32(b_v.val[0], a_v.val[2], 0);
+    float32x4_t r3 = vmulq_laneq_f32(b_v.val[0], a_v.val[3], 0);
 
+    r0 = vfmaq_laneq_f32(r0, b_v.val[1], a_v.val[0], 1);
+    r1 = vfmaq_laneq_f32(r1, b_v.val[1], a_v.val[1], 1);
+    r2 = vfmaq_laneq_f32(r2, b_v.val[1], a_v.val[2], 1);
+    r3 = vfmaq_laneq_f32(r3, b_v.val[1], a_v.val[3], 1);
+
+    r0 = vfmaq_laneq_f32(r0, b_v.val[2], a_v.val[0], 2);
+    r1 = vfmaq_laneq_f32(r1, b_v.val[2], a_v.val[1], 2);
+    r2 = vfmaq_laneq_f32(r2, b_v.val[2], a_v.val[2], 2);
+    r3 = vfmaq_laneq_f32(r3, b_v.val[2], a_v.val[3], 2);
+
+    r0 = vfmaq_laneq_f32(r0, b_v.val[3], a_v.val[0], 3);
+    r1 = vfmaq_laneq_f32(r1, b_v.val[3], a_v.val[1], 3);
+    r2 = vfmaq_laneq_f32(r2, b_v.val[3], a_v.val[2], 3);
+    r3 = vfmaq_laneq_f32(r3, b_v.val[3], a_v.val[3], 3);
+
+    vst1q_f32_x4(out.m, float32x4x4_t{r0, r1, r2, r3});
 #else
 
 	/*

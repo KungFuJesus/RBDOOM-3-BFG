@@ -33,6 +33,10 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "RenderCommon.h"
 
+#if defined(USE_INTRINSICS_NEON)
+#include <arm_neon.h>
+#endif
+
 /*
 ==========================================================================================
 
@@ -111,7 +115,31 @@ void R_MatrixMultiply( const float a[16], const float b[16], float out[16] )
 	_mm_storeu_ps( out + 1 * 4, t1 );
 	_mm_storeu_ps( out + 2 * 4, t2 );
 	_mm_storeu_ps( out + 3 * 4, t3 );
+#elif defined(USE_INTRINSICS_NEON)
+    float32x4x4_t a_v = vld1q_f32_x4(a);
+    float32x4x4_t b_v = vld1q_f32_x4(b);
+    
+    float32x4_t r0 = vmulq_laneq_f32(b_v.val[0], a_v.val[0], 0);
+    float32x4_t r1 = vmulq_laneq_f32(b_v.val[0], a_v.val[1], 0);
+    float32x4_t r2 = vmulq_laneq_f32(b_v.val[0], a_v.val[2], 0);
+    float32x4_t r3 = vmulq_laneq_f32(b_v.val[0], a_v.val[3], 0);
 
+    r0 = vfmaq_laneq_f32(r0, b_v.val[1], a_v.val[0], 1);
+    r1 = vfmaq_laneq_f32(r1, b_v.val[1], a_v.val[1], 1);
+    r2 = vfmaq_laneq_f32(r2, b_v.val[1], a_v.val[2], 1);
+    r3 = vfmaq_laneq_f32(r3, b_v.val[1], a_v.val[3], 1);
+
+    r0 = vfmaq_laneq_f32(r0, b_v.val[2], a_v.val[0], 2);
+    r1 = vfmaq_laneq_f32(r1, b_v.val[2], a_v.val[1], 2);
+    r2 = vfmaq_laneq_f32(r2, b_v.val[2], a_v.val[2], 2);
+    r3 = vfmaq_laneq_f32(r3, b_v.val[2], a_v.val[3], 2);
+
+    r0 = vfmaq_laneq_f32(r0, b_v.val[3], a_v.val[0], 3);
+    r1 = vfmaq_laneq_f32(r1, b_v.val[3], a_v.val[1], 3);
+    r2 = vfmaq_laneq_f32(r2, b_v.val[3], a_v.val[2], 3);
+    r3 = vfmaq_laneq_f32(r3, b_v.val[3], a_v.val[3], 3);
+
+    vst1q_f32_x4(out, float32x4x4_t{r0, r1, r2, r3});
 #else
 
 	/*
@@ -156,6 +184,10 @@ R_MatrixTranspose
 */
 void R_MatrixTranspose( const float in[16], float out[16] )
 {
+#if defined(USE_INTRINSICS_NEON)
+    float32x4x4_t in_v = vld4q_f32(in);
+    vst1q_f32_x4(out, in_v);
+#else
 	for( int i = 0; i < 4; i++ )
 	{
 		for( int j = 0; j < 4; j++ )
@@ -163,6 +195,7 @@ void R_MatrixTranspose( const float in[16], float out[16] )
 			out[i * 4 + j] = in[j * 4 + i];
 		}
 	}
+#endif
 }
 
 /*
@@ -363,7 +396,7 @@ void R_SetupViewMatrix( viewDef_t* viewDef )
 	};
 
 	viewEntity_t* world = &viewDef->worldSpace;
-	memset( world, 0, sizeof( *world ) );
+	__builtin_memset( world, 0, sizeof( *world ) );
 
 	// the model matrix is an identity
 	world->modelMatrix[0 * 4 + 0] = 1.0f;

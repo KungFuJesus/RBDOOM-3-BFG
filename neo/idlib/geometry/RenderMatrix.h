@@ -164,7 +164,7 @@ public:
 	static frustumCull_t	CullFrustumCornersToPlane( const frustumCorners_t& corners, const idPlane& plane );
 
 private:
-	float					m[16];
+	alignas(16) float					m[16];
 };
 
 extern const idRenderMatrix renderMatrix_identity;
