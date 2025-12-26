@@ -37,6 +37,8 @@ If you have questions concerning this license or the applicable additional terms
 #include <arm_neon.h>
 #endif
 
+#include <chrono>
+
 /*
 ==========================================================================================
 
@@ -321,6 +323,18 @@ NOTE: assumes no skewing or scaling transforms
 */
 void R_GlobalPointToLocal( const float modelMatrix[16], const idVec3& in, idVec3& out )
 {
+#if defined(USE_INTRINSICS_NEON)
+    float32x4x4_t a_v = vld4q_f32(modelMatrix);
+    float32x4_t mm_r3 = vld1q_f32(modelMatrix + 3*4);
+    const float32x4_t xyz_v = {in[0], in[1], in[2], 0.0f};
+    float32x4_t temp = vsubq_f32(xyz_v, mm_r3);
+    float32x4_t out_v = vmulq_laneq_f32(a_v.val[0], temp, 0); 
+    out_v = vfmaq_laneq_f32(out_v, a_v.val[1], temp, 1);
+    out_v = vfmaq_laneq_f32(out_v, a_v.val[2], temp, 2);
+    out[0] = out_v[0];
+    out[1] = out_v[1];
+    out[2] = out_v[2];
+#else
 	idVec3 temp;
 
 	temp[0] = in[0] - modelMatrix[3 * 4 + 0];
@@ -330,6 +344,7 @@ void R_GlobalPointToLocal( const float modelMatrix[16], const idVec3& in, idVec3
 	out[0] = temp[0] * modelMatrix[0 * 4 + 0] + temp[1] * modelMatrix[0 * 4 + 1] + temp[2] * modelMatrix[0 * 4 + 2];
 	out[1] = temp[0] * modelMatrix[1 * 4 + 0] + temp[1] * modelMatrix[1 * 4 + 1] + temp[2] * modelMatrix[1 * 4 + 2];
 	out[2] = temp[0] * modelMatrix[2 * 4 + 0] + temp[1] * modelMatrix[2 * 4 + 1] + temp[2] * modelMatrix[2 * 4 + 2];
+#endif
 }
 
 /*
@@ -341,9 +356,25 @@ NOTE: assumes no skewing or scaling transforms
 */
 void R_LocalVectorToGlobal( const float modelMatrix[16], const idVec3& in, idVec3& out )
 {
+#if defined(USE_INTRINSICS_NEON)
+    float32x4x4_t a_v = vld4q_f32(modelMatrix);
+    float32x4_t x = vdupq_n_f32(in.x);
+    float32x4_t y = vdupq_n_f32(in.y);
+    float32x4_t z = vdupq_n_f32(in.z);
+    float32x4_t out1 = vdupq_n_f32(0.0f);
+
+    float32x4_t out0 = vmulq_f32(a_v.val[0], x);
+    out1 = vfmaq_f32(out1, a_v.val[1], y);
+    out0 = vfmaq_f32(out0, a_v.val[2], z);
+    out1 = vaddq_f32(out1, out0);
+    out[0] = out1[0];
+    out[1] = out1[1];
+    out[2] = out1[2];
+#else
 	out[0] = in[0] * modelMatrix[0 * 4 + 0] + in[1] * modelMatrix[1 * 4 + 0] + in[2] * modelMatrix[2 * 4 + 0];
 	out[1] = in[0] * modelMatrix[0 * 4 + 1] + in[1] * modelMatrix[1 * 4 + 1] + in[2] * modelMatrix[2 * 4 + 1];
 	out[2] = in[0] * modelMatrix[0 * 4 + 2] + in[1] * modelMatrix[1 * 4 + 2] + in[2] * modelMatrix[2 * 4 + 2];
+#endif
 }
 
 /*
@@ -397,10 +428,27 @@ NOTE: assumes no skewing or scaling transforms
 */
 void R_LocalPlaneToGlobal( const float modelMatrix[16], const idPlane& in, idPlane& out )
 {
+#if defined(USE_INTRINSICS_NEON)
+    float32x4x4_t a_v = vld1q_f32_x4(modelMatrix);
+    float32x4_t b_v = vld1q_f32(in.ToFloatPtr());
+    float32x4_t out_v0 = vmulq_laneq_f32(a_v.val[0], b_v, 0);
+    float32x4_t out_v1 = b_v;
+    out_v0 = vfmaq_laneq_f32(out_v0, a_v.val[1], b_v, 1);
+    out_v0 = vfmaq_laneq_f32(out_v0, a_v.val[2], b_v, 2);
+
+    /* Hmm, there's probably a more efficient way to do this, likely in the scalar pipeline, I couldn't seem
+     * to find a horizontal madd like x86 has */
+    out_v1 = vmlsq_laneq_f32(out_v1, vdupq_laneq_f32(a_v.val[3], 0), out_v0, 0);
+    out_v1 = vmlsq_laneq_f32(out_v1, vdupq_laneq_f32(a_v.val[3], 1), out_v0, 1);
+    out_v1 = vmlsq_laneq_f32(out_v1, vdupq_laneq_f32(a_v.val[3], 2), out_v0, 2);
+    out_v0[3] = out_v1[3];
+    vst1q_f32(out.ToFloatPtr(), out_v0);
+#else
 	out[0] = in[0] * modelMatrix[0 * 4 + 0] + in[1] * modelMatrix[1 * 4 + 0] + in[2] * modelMatrix[2 * 4 + 0];
 	out[1] = in[0] * modelMatrix[0 * 4 + 1] + in[1] * modelMatrix[1 * 4 + 1] + in[2] * modelMatrix[2 * 4 + 1];
 	out[2] = in[0] * modelMatrix[0 * 4 + 2] + in[1] * modelMatrix[1 * 4 + 2] + in[2] * modelMatrix[2 * 4 + 2];
 	out[3] = in[3] - modelMatrix[3 * 4 + 0] * out[0] - modelMatrix[3 * 4 + 1] * out[1] - modelMatrix[3 * 4 + 2] * out[2];
+#endif
 }
 
 /*
