@@ -285,9 +285,31 @@ NOTE: assumes no skewing or scaling transforms
 */
 void R_LocalPointToGlobal( const float modelMatrix[16], const idVec3& in, idVec3& out )
 {
+#if defined(USE_INTRINSICS_NEON)
+    float32x4x4_t a_v = vld1q_f32_x4(modelMatrix);
+    /* Eat the cost of 3 loads, I guess. Hopefully the broadcast is cheap. If vec3 were instead 4 elements
+     * wide we could do one single load */
+    const float32x4_t x_v = vdupq_n_f32(in[0]);
+    const float32x4_t y_v = vdupq_n_f32(in[1]);
+    const float32x4_t z_v = vdupq_n_f32(in[2]);
+    float32x4_t out0 = a_v.val[3];
+
+
+    out0 = vfmaq_f32(out0, a_v.val[0], x_v);
+    float32x4_t out1 = vmulq_f32(a_v.val[1], y_v);
+    out0 = vfmaq_f32(out0, a_v.val[2], z_v);
+    out0 = vaddq_f32(out0, out1);
+
+    /* Can't vectorize this store, either */
+    //vst1q_f32(out.ToFloatPtr(), out0);
+    out[0] = out0[0];
+    out[1] = out0[1];
+    out[2] = out0[2];
+#else
 	out[0] = in[0] * modelMatrix[0 * 4 + 0] + in[1] * modelMatrix[1 * 4 + 0] + in[2] * modelMatrix[2 * 4 + 0] + modelMatrix[3 * 4 + 0];
 	out[1] = in[0] * modelMatrix[0 * 4 + 1] + in[1] * modelMatrix[1 * 4 + 1] + in[2] * modelMatrix[2 * 4 + 1] + modelMatrix[3 * 4 + 1];
 	out[2] = in[0] * modelMatrix[0 * 4 + 2] + in[1] * modelMatrix[1 * 4 + 2] + in[2] * modelMatrix[2 * 4 + 2] + modelMatrix[3 * 4 + 2];
+#endif
 }
 
 /*
@@ -347,10 +369,23 @@ NOTE: assumes no skewing or scaling transforms
 */
 void R_GlobalPlaneToLocal( const float modelMatrix[16], const idPlane& in, idPlane& out )
 {
+#if defined(USE_INTRINSICS_NEON)
+    float32x4x4_t a_v = vld4q_f32(modelMatrix);
+    float32x4_t b_v = vld1q_f32(in.ToFloatPtr());
+
+    float32x4_t out_v0 = { 0.0f, 0.0f, 0.0f, b_v[3] };
+    float32x4_t out_v1 = vdupq_n_f32(0.0f);
+    out_v0 = vfmaq_laneq_f32(out_v0, a_v.val[0], b_v, 0);
+    out_v1 = vfmaq_laneq_f32(out_v1, a_v.val[1], b_v, 1); 
+    out_v0 = vfmaq_laneq_f32(out_v0, a_v.val[2], b_v, 2); 
+    out_v0 = vaddq_f32(out_v0, out_v1);
+    vst1q_f32(out.ToFloatPtr(), out_v0);
+#else
 	out[0] = in[0] * modelMatrix[0 * 4 + 0] + in[1] * modelMatrix[0 * 4 + 1] + in[2] * modelMatrix[0 * 4 + 2];
 	out[1] = in[0] * modelMatrix[1 * 4 + 0] + in[1] * modelMatrix[1 * 4 + 1] + in[2] * modelMatrix[1 * 4 + 2];
 	out[2] = in[0] * modelMatrix[2 * 4 + 0] + in[1] * modelMatrix[2 * 4 + 1] + in[2] * modelMatrix[2 * 4 + 2];
 	out[3] = in[0] * modelMatrix[3 * 4 + 0] + in[1] * modelMatrix[3 * 4 + 1] + in[2] * modelMatrix[3 * 4 + 2] + in[3];
+#endif
 }
 
 /*
