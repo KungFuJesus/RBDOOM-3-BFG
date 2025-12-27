@@ -4659,32 +4659,40 @@ void idRenderMatrix::GetFrustumPlanes( idPlane planes[6], const idRenderMatrix& 
 	}
 #else
     float32x4x4_t frustVecs = vld1q_f32_x4(frustum.m);
+    float32x4_t p0, p1, p2, p3, p4, p5;
 	if (zeroToOne) {
 		// left: inside(p) = p * frustum[0] > 0
-        vst1q_f32(planes[0].ToFloatPtr(), frustVecs.val[0]);
+        //vst1q_f32(planes[0].ToFloatPtr(), frustVecs.val[0]);
+        p0 = frustVecs.val[0];
 
 		// bottom: inside(p) = p * frustum[1] > 0
-        vst1q_f32(planes[2].ToFloatPtr(), frustVecs.val[1]);
+        p2 = frustVecs.val[1];
+        //vst1q_f32(planes[2].ToFloatPtr(), frustVecs.val[1]);
 
 		// near: inside(p) = p * frustum[2] > 0
-        vst1q_f32(planes[4].ToFloatPtr(), frustVecs.val[2]);
+        //vst1q_f32(planes[4].ToFloatPtr(), frustVecs.val[2]);
+        p4 = frustVecs.val[2];
 	} else {
 		// left: inside(p) = p * frustum[0] > - ( p * frustum[3] )
-        vst1q_f32(planes[0].ToFloatPtr(), vaddq_f32(frustVecs.val[0], frustVecs.val[3]));
+        //vst1q_f32(planes[0].ToFloatPtr(), vaddq_f32(frustVecs.val[0], frustVecs.val[3]));
+        p0 = vaddq_f32(frustVecs.val[0], frustVecs.val[3]);
 
 		// bottom: inside(p) = p * frustum[1] > -( p * frustum[3] )
-        vst1q_f32(planes[2].ToFloatPtr(), vaddq_f32(frustVecs.val[3], frustVecs.val[1]));
+        p2 = vaddq_f32(frustVecs.val[3], frustVecs.val[1]);
+        //vst1q_f32(planes[2].ToFloatPtr(), vaddq_f32(frustVecs.val[3], frustVecs.val[1]));
 
 		// near: inside(p) = p * frustum[2] > -( p * frustum[3] )
-        vst1q_f32(planes[4].ToFloatPtr(), vaddq_f32(frustVecs.val[3], frustVecs.val[2]));
+        p4 = vaddq_f32(frustVecs.val[3], frustVecs.val[2]);
+        //vst1q_f32(planes[4].ToFloatPtr(), vaddq_f32(frustVecs.val[3], frustVecs.val[2]));
     }
 
-    vst1q_f32(planes[1].ToFloatPtr(), vsubq_f32(frustVecs.val[3], frustVecs.val[0]));
-    vst1q_f32(planes[3].ToFloatPtr(), vsubq_f32(frustVecs.val[3], frustVecs.val[1]));
-    vst1q_f32(planes[5].ToFloatPtr(), vsubq_f32(frustVecs.val[3], frustVecs.val[2]));
+    p1 = vsubq_f32(frustVecs.val[3], frustVecs.val[0]);
+    p3 = vsubq_f32(frustVecs.val[3], frustVecs.val[1]);
+    p5 = vsubq_f32(frustVecs.val[3], frustVecs.val[2]);
 
     /* TODO: vectorize with squared sums and rsqrt (with newton raphsons) */
 	if (normalize) {
+        /*
 		for (int i = 0; i < 6; i++) {
 			float s = idMath::InvSqrt( planes[i].Normal().LengthSqr() );
 			planes[i][0] *= s;
@@ -4692,7 +4700,18 @@ void idRenderMatrix::GetFrustumPlanes( idPlane planes[6], const idRenderMatrix& 
 			planes[i][2] *= s;
 			planes[i][3] *= s;
 		}
+        */
+        float32x4_t normMask = {1.0f, 1.0f, 1.0f, 0.0f};
+        p0 = vdivq_f32(p0, vsqrtq_f32(vdupq_n_f32(vaddvq_f32(vmulq_f32(vmulq_f32(p0, normMask), p0)))));
+        p1 = vdivq_f32(p1, vsqrtq_f32(vdupq_n_f32(vaddvq_f32(vmulq_f32(vmulq_f32(p1, normMask), p1)))));
+        p2 = vdivq_f32(p2, vsqrtq_f32(vdupq_n_f32(vaddvq_f32(vmulq_f32(vmulq_f32(p2, normMask), p2)))));
+        p3 = vdivq_f32(p3, vsqrtq_f32(vdupq_n_f32(vaddvq_f32(vmulq_f32(vmulq_f32(p3, normMask), p3)))));
+        p4 = vdivq_f32(p4, vsqrtq_f32(vdupq_n_f32(vaddvq_f32(vmulq_f32(vmulq_f32(p4, normMask), p4)))));
+        p5 = vdivq_f32(p5, vsqrtq_f32(vdupq_n_f32(vaddvq_f32(vmulq_f32(vmulq_f32(p5, normMask), p5)))));
 	}
+
+    vst1q_f32_x4(planes[0].ToFloatPtr(), float32x4x4_t{p0, p1, p2, p3});
+    vst1q_f32_x2(planes[4].ToFloatPtr(), float32x4x2_t{p4, p5});
 
 #endif
 }
