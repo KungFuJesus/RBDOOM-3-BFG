@@ -39,6 +39,15 @@ If you have questions concerning this license or the applicable additional terms
 
 #if defined(USE_INTRINSICS_NEON)
 #include <arm_neon.h>
+static inline int movemask_ps_neon(const float32x4_t &x)
+{
+    const int32x4_t shifts = { -31, -30, -29, -28 };
+    const uint32x4_t andMask = vdupq_n_u32(0x80000000);
+
+    uint32x4_t signs = vqshlq_u32(vandq_u32(vreinterpretq_u32_f32(x), andMask), shifts);
+    uint32x2_t signsReduced = vorr_u32(vget_low_u32(signs), vget_high_u32(signs));
+    return int(signsReduced[0] | signsReduced[1]);
+}
 #endif
 
 // FIXME:	it would be nice if all render matrices were 16-byte aligned
@@ -145,11 +154,11 @@ static const __m128 vector_float_last_one					= { 0.0f, 0.0f, 0.0f, 1.0f };
 #endif
 
 #if defined(USE_INTRINSICS_NEON)
-static const uint8_t alignas(16) vxy_tbl[] = {  0, 1, 2, 3, // min X
-                                               16 + 4, 16 + 5, 16 + 6, 16 + 7, // max X
+alignas(16) static const uint8_t vxy_tbl[] = {  0, 1, 2, 3, // min X
+                                                16 + 4, 16 + 5, 16 + 6, 16 + 7, // max X
                                                 4, 5, 6, 7, // min Y
-                                               16 + 8, 16 + 9, 16 + 10, 16 + 11 // max Y
-                                             };
+                                                16 + 8, 16 + 9, 16 + 10, 16 + 11 // max Y
+                                              };
 #endif
 
 /*
@@ -4576,6 +4585,7 @@ void idRenderMatrix::GetFrustumPlanes( idPlane planes[6], const idRenderMatrix& 
 	//			this code may be called for non-MVP matrices.
 	const bool isZeroOneZ = false;
 
+#if !defined(USE_INTRINSICS_NEON)
 	if( zeroToOne )
 	{
 		// left: inside(p) = p * frustum[0] > 0
@@ -4647,6 +4657,44 @@ void idRenderMatrix::GetFrustumPlanes( idPlane planes[6], const idRenderMatrix& 
 			planes[i][3] *= s;
 		}
 	}
+#else
+    float32x4x4_t frustVecs = vld1q_f32_x4(frustum.m);
+	if (zeroToOne) {
+		// left: inside(p) = p * frustum[0] > 0
+        vst1q_f32(planes[0].ToFloatPtr(), frustVecs.val[0]);
+
+		// bottom: inside(p) = p * frustum[1] > 0
+        vst1q_f32(planes[2].ToFloatPtr(), frustVecs.val[1]);
+
+		// near: inside(p) = p * frustum[2] > 0
+        vst1q_f32(planes[4].ToFloatPtr(), frustVecs.val[2]);
+	} else {
+		// left: inside(p) = p * frustum[0] > - ( p * frustum[3] )
+        vst1q_f32(planes[0].ToFloatPtr(), vaddq_f32(frustVecs.val[0], frustVecs.val[3]));
+
+		// bottom: inside(p) = p * frustum[1] > -( p * frustum[3] )
+        vst1q_f32(planes[2].ToFloatPtr(), vaddq_f32(frustVecs.val[3], frustVecs.val[1]));
+
+		// near: inside(p) = p * frustum[2] > -( p * frustum[3] )
+        vst1q_f32(planes[4].ToFloatPtr(), vaddq_f32(frustVecs.val[3], frustVecs.val[2]));
+    }
+
+    vst1q_f32(planes[1].ToFloatPtr(), vsubq_f32(frustVecs.val[3], frustVecs.val[0]));
+    vst1q_f32(planes[3].ToFloatPtr(), vsubq_f32(frustVecs.val[3], frustVecs.val[1]));
+    vst1q_f32(planes[5].ToFloatPtr(), vsubq_f32(frustVecs.val[3], frustVecs.val[2]));
+
+    /* TODO: vectorize with squared sums and rsqrt (with newton raphsons) */
+	if (normalize) {
+		for (int i = 0; i < 6; i++) {
+			float s = idMath::InvSqrt( planes[i].Normal().LengthSqr() );
+			planes[i][0] *= s;
+			planes[i][1] *= s;
+			planes[i][2] *= s;
+			planes[i][3] *= s;
+		}
+	}
+
+#endif
 }
 
 /*
@@ -4794,6 +4842,40 @@ frustumCull_t idRenderMatrix::CullFrustumCornersToPlane( const frustumCorners_t&
 
 	int b0 = _mm_movemask_ps( d0 );
 	int b1 = _mm_movemask_ps( d1 );
+
+	unsigned int front = ( ( unsigned int ) - ( ( b0 & b1 ) ^ 15 ) ) >> 31;
+	unsigned int back = ( ( unsigned int ) - ( b0 | b1 ) ) >> 31;
+
+	compile_time_assert( FRUSTUM_CULL_FRONT == 1 );
+	compile_time_assert( FRUSTUM_CULL_BACK == 2 );
+	compile_time_assert( FRUSTUM_CULL_CROSS == 3 );
+
+	return ( frustumCull_t )( front | ( back << 1 ) );
+#elif defined(USE_INTRINSICS_NEON)
+	float32x4_t vp = vld1q_f32(plane.ToFloatPtr());
+
+    float32x4x2_t x01 = vld1q_f32_x2(corners.x);
+    float32x4x2_t y01 = vld1q_f32_x2(corners.y);
+    float32x4x2_t z01 = vld1q_f32_x2(corners.z);
+
+    /*                D                      B                            A
+	__m128 d0 = _mm_madd_ps( x0, p0, _mm_madd_ps( y0, p1, _mm_madd_ps( z0, p2, p3 ) ) );
+	__m128 d1 = _mm_madd_ps( x1, p0, _mm_madd_ps( y1, p1, _mm_madd_ps( z1, p2, p3 ) ) );
+    */
+
+    float32x4_t p3 = vdupq_laneq_f32(vp, 3);
+    float32x4_t A0 = vfmaq_laneq_f32(p3, z01.val[0], vp, 2);
+    float32x4_t A1 = vfmaq_laneq_f32(p3, z01.val[1], vp, 2);
+    float32x4_t B0 = vfmaq_laneq_f32(A0, y01.val[0], vp, 1);
+    float32x4_t B1 = vfmaq_laneq_f32(A1, y01.val[1], vp, 1);
+    float32x4_t d0 = vfmaq_laneq_f32(B0, x01.val[0], vp, 0);
+    float32x4_t d1 = vfmaq_laneq_f32(B1, x01.val[1], vp, 0);
+
+    uint32x4_t b0v = vreinterpretq_u32_f32(d0);
+    uint32x4_t b1v = vreinterpretq_u32_f32(d1);
+
+    int b0 = movemask_ps_neon(d0);
+    int b1 = movemask_ps_neon(d1);
 
 	unsigned int front = ( ( unsigned int ) - ( ( b0 & b1 ) ^ 15 ) ) >> 31;
 	unsigned int back = ( ( unsigned int ) - ( b0 | b1 ) ) >> 31;
