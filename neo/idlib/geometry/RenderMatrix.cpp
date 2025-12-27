@@ -144,6 +144,13 @@ static const __m128 vector_float_neg_one					= { -1.0f, -1.0f, -1.0f, -1.0f };
 static const __m128 vector_float_last_one					= { 0.0f, 0.0f, 0.0f, 1.0f };
 #endif
 
+#if defined(USE_INTRINSICS_NEON)
+static const uint8_t alignas(16) vxy_tbl[] = {  0, 1, 2, 3, // min X
+                                               16 + 4, 16 + 5, 16 + 6, 16 + 7, // max X
+                                                4, 5, 6, 7, // min Y
+                                               16 + 8, 16 + 9, 16 + 10, 16 + 11 // max Y
+                                             };
+#endif
 
 /*
 ================================================================================================
@@ -1934,6 +1941,104 @@ bool idRenderMatrix::CullBoundsToMVPbits( const idRenderMatrix& mvp, const idBou
 	*outBits = ( byte )( bits ^ 63 );
 
 	return ( bits != 63 );
+#elif defined(USE_INTRINSICS_NEON)
+	float32x4x4_t mvp03 = vld1q_f32_x4(mvp.m);
+	float32x4_t minMul = zeroToOne ? vdupq_n_f32(0.0f) : vdupq_n_f32(-1.0f);
+    /* Wow...SSSE3 was quite limited... To avoid an out of bounds load though we're going to need to do some
+     * overlapping loads. I suspect it'll be better to accomplish the interleave madness done here with table
+     * instructions but we'll see how this goes */
+    float32x4_t b0 = vld1q_f32(bounds.ToFloatPtr()); // min x, min y, min z, max x
+    float32x4_t b1 = vld1q_f32(bounds.ToFloatPtr() + 2); // min z, max x, max y , max z
+
+    /* hah...no equivalent for these quick permutations I'm afraid, need a full table lookup */
+    float32x4_t v_xy = vreinterpretq_f32_u8(
+        vqtbl2q_u8(uint8x16x2_t{vreinterpretq_u8_f32(b0), vreinterpretq_u8_f32(b1)},
+                   vld1q_u8(vxy_tbl))
+    );
+    float32x4_t vz0 = vdupq_laneq_f32(b0, 2);
+    float32x4_t vz1 = vdupq_laneq_f32(b1, 3);
+    float32x2_t xLow = vget_low_f32(v_xy);
+    float32x4_t vx = vcombine_f32(xLow, xLow);
+    /* I dunno, let's see what the compiler comes up with */
+    float32x4_t vy = float32x4_t{v_xy[2], v_xy[2], v_xy[3], v_xy[3]};
+
+    /* We'll match the way the SSE code is doing this for now. A transposing load and rearranging the bound
+     * elements is likely to be a better bet, though */
+    float32x4_t parx = vdupq_laneq_f32(mvp03.val[0], 3);
+    float32x4_t pary = vdupq_laneq_f32(mvp03.val[1], 3);
+    float32x4_t parz = vdupq_laneq_f32(mvp03.val[2], 3);
+    float32x4_t parw = vdupq_laneq_f32(mvp03.val[3], 3);
+
+    parx = vfmaq_laneq_f32(parx, vx, mvp03.val[0], 0);
+    pary = vfmaq_laneq_f32(pary, vx, mvp03.val[1], 0);
+    parz = vfmaq_laneq_f32(parz, vx, mvp03.val[2], 0);
+    parw = vfmaq_laneq_f32(parw, vx, mvp03.val[3], 0);
+
+    parx = vfmaq_laneq_f32(parx, vy, mvp03.val[0], 1);
+    pary = vfmaq_laneq_f32(pary, vy, mvp03.val[1], 1);
+    parz = vfmaq_laneq_f32(parz, vy, mvp03.val[2], 1);
+    parw = vfmaq_laneq_f32(parw, vy, mvp03.val[3], 1);
+
+	float32x4_t x0 = vfmaq_laneq_f32(parx, vz0, mvp03.val[0], 2);
+	float32x4_t y0 = vfmaq_laneq_f32(pary, vz0, mvp03.val[1], 2);
+	float32x4_t z0 = vfmaq_laneq_f32(parz, vz0, mvp03.val[2], 2);
+	float32x4_t w0 = vfmaq_laneq_f32(parw, vz0, mvp03.val[3], 2);
+
+	float32x4_t x1 = vfmaq_laneq_f32(parx, vz1, mvp03.val[0], 2);
+	float32x4_t y1 = vfmaq_laneq_f32(pary, vz1, mvp03.val[1], 2);
+	float32x4_t z1 = vfmaq_laneq_f32(parz, vz1, mvp03.val[2], 2);
+	float32x4_t w1 = vfmaq_laneq_f32(parw, vz1, mvp03.val[3], 2);
+
+	float32x4_t maxW0 = w0;
+	float32x4_t maxW1 = w1;
+	float32x4_t minW0 = vmulq_f32(w0, minMul);
+	float32x4_t minW1 = vmulq_f32(w1, minMul);
+#if defined( CLIP_SPACE_D3D )
+	float32x4_t minZ0 = vdupq_n_f32(0.0f);
+	float32x4_t minZ1 = vdupq_n_f32(0.0f);
+#else
+	float32x4_t minZ0 = minW0;
+	float32x4_t minZ1 = minW1;
+#endif
+
+	uint32x4_t cullBits0 = vcgtq_f32(x0, minW0);
+	uint32x4_t cullBits1 = vcgtq_f32(maxW0, x0);
+	uint32x4_t cullBits2 = vcgtq_f32(y0, minW0);
+	uint32x4_t cullBits3 = vcgtq_f32(maxW0, y0);
+	uint32x4_t cullBits4 = vcgtq_f32(z0, minZ0);
+	uint32x4_t cullBits5 = vcgtq_f32(maxW0, z0);
+
+    cullBits0 = vorrq_u32(cullBits0, vcgtq_f32(x1, minW1));
+    cullBits1 = vorrq_u32(cullBits1, vcgtq_f32(maxW1, x1));
+    cullBits2 = vorrq_u32(cullBits2, vcgtq_f32(y1, minW1));
+    cullBits3 = vorrq_u32(cullBits3, vcgtq_f32(maxW1, y1));
+    cullBits4 = vorrq_u32(cullBits4, vcgtq_f32(z1, minZ1));
+    cullBits5 = vorrq_u32(cullBits5, vcgtq_f32(maxW1, z1));
+
+    uint32x4_t bits = vdupq_n_u32(1);
+
+    cullBits0 = vandq_u32(cullBits0, bits);
+    cullBits1 = vandq_u32(cullBits1, vshlq_n_u32(bits, 1));
+    cullBits2 = vandq_u32(cullBits2, vshlq_n_u32(bits, 2));
+    cullBits3 = vandq_u32(cullBits3, vshlq_n_u32(bits, 3));
+    cullBits4 = vandq_u32(cullBits4, vshlq_n_u32(bits, 4));
+    cullBits5 = vandq_u32(cullBits5, vshlq_n_u32(bits, 5));
+
+    cullBits0 = vorrq_u32(cullBits0, cullBits1);
+    cullBits2 = vorrq_u32(cullBits2, cullBits3);
+    cullBits4 = vorrq_u32(cullBits4, cullBits5);
+    cullBits0 = vorrq_u32(cullBits0, cullBits2);
+    cullBits0 = vorrq_u32(cullBits0, cullBits4);
+
+    /* Again, let's see what the compiler produces */
+    uint32x4_t in0 = uint32x4_t{cullBits0[2], cullBits0[3], cullBits0[0], cullBits0[1]};
+    cullBits0 = vorrq_u32(cullBits0, in0);
+    uint32x4_t in1 = uint32x4_t{cullBits0[1], cullBits0[0], cullBits0[1], cullBits0[0]};
+    cullBits0 = vorrq_u32(cullBits0, in1);
+
+    uint32_t bitsOut = cullBits0[0];
+	*outBits = ( byte )( bitsOut ^ 63 );
+	return ( bitsOut != 63 );
 
 #else
 
