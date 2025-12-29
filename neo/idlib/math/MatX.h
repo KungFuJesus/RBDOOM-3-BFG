@@ -51,6 +51,11 @@ NOTE: due to the temporary memory pool idMatX cannot be used by multiple threads
 	#define MATX_SIMD
 #endif
 
+#if defined(USE_INTRINSICS_NEON)
+    #include <arm_neon.h>
+    #include <openblas/cblas.h>
+#endif
+
 class idMatX
 {
 public:
@@ -1567,11 +1572,14 @@ ID_INLINE void idMatX::MultiplySub( idVecX& dst, const idVecX& vec ) const
 idMatX::TransposeMultiply
 ========================
 */
+/* TODO */
 ID_INLINE void idMatX::TransposeMultiply( idVecX& dst, const idVecX& vec ) const
 {
 	dst.SetSize( numColumns );
 	const float* vPtr = vec.ToFloatPtr();
 	float* dstPtr = dst.ToFloatPtr();
+
+#if !defined(USE_INTRINSICS_NEON)
 	float* temp = ( float* )_alloca16( numColumns * sizeof( float ) );
 	for( int i = 0; i < numColumns; i++ )
 	{
@@ -1588,6 +1596,48 @@ ID_INLINE void idMatX::TransposeMultiply( idVecX& dst, const idVecX& vec ) const
 	{
 		dstPtr[i] = temp[i];
 	}
+#else
+    
+    size_t j = 0;
+
+    for (; j + 2 * 4 <= numColumns; j += 2 * 4) {
+        float32x4_t acc0 = vdupq_n_f32(0.0f);
+        float32x4_t acc1 = vdupq_n_f32(0.0f);
+
+        for (size_t i = 0; i < numRows; ++i) {
+            float32x4_t v_vi = vdupq_n_f32(vec[i]);
+
+            const float* Ai = mat + i * numColumns + j;
+
+            float32x4x2_t a0a1 = vld1q_f32_x2(Ai);
+
+            acc0 = vfmaq_f32(acc0, a0a1.val[0], v_vi);
+            acc1 = vfmaq_f32(acc1, a0a1.val[1], v_vi);
+        }
+
+        vst1q_f32_x2(dstPtr + j, float32x4x2_t{acc0, acc1});
+    }
+
+    for (; j + 4 <= numColumns; j += 4) {
+        float32x4_t acc = vdupq_n_f32(0.0f);
+
+        for (size_t i = 0; i < numRows; ++i) {
+            float32x4_t v_vi = vdupq_n_f32(vec[i]);
+            float32x4_t a = vld1q_f32(mat + i * numColumns + j);
+            acc = vfmaq_f32(acc, a, v_vi);
+        }
+
+        vst1q_f32(dstPtr + j, acc);
+    }
+
+    for (; j < numColumns; ++j) {
+        float sum = 0.0f;
+        for (size_t i = 0; i < numRows; ++i) {
+            sum += mat[i * numColumns + j] * vec[i];
+        }
+        dstPtr[j] = sum;
+    }
+#endif
 }
 
 /*
@@ -1595,6 +1645,7 @@ ID_INLINE void idMatX::TransposeMultiply( idVecX& dst, const idVecX& vec ) const
 idMatX::TransposeMultiplyAdd
 ========================
 */
+/* TODO */
 ID_INLINE void idMatX::TransposeMultiplyAdd( idVecX& dst, const idVecX& vec ) const
 {
 	assert( dst.GetSize() == numColumns );
