@@ -1485,6 +1485,7 @@ ID_INLINE void idMatX::Multiply( idVecX& dst, const idVecX& vec ) const
 	const float* mPtr = mat;
 	const float* vPtr = vec.ToFloatPtr();
 	float* dstPtr = dst.ToFloatPtr();
+#if !defined(USE_INTRINSICS_NEON)
 	float* temp = ( float* )_alloca16( numRows * sizeof( float ) );
     #pragma omp simd
 	for( int i = 0; i < numRows; i++ )
@@ -1503,6 +1504,31 @@ ID_INLINE void idMatX::Multiply( idVecX& dst, const idVecX& vec ) const
 	{
 		dstPtr[i] = temp[i];
 	}
+#else
+    constexpr size_t TILE = 8;
+
+    for (size_t i = 0; i < numRows; ++i) {
+        float32x4_t acc0 = vdupq_n_f32(0.0f);
+        float32x4_t acc1 = vdupq_n_f32(0.0f);
+
+        size_t j = 0;
+        for (; j + TILE <= numColumns; j += TILE) {
+            float32x4x2_t a0a1 = vld1q_f32_x2(mPtr + i*numColumns + j);
+            float32x4x2_t v0v1 = vld1q_f32_x2(vPtr + j);
+            acc0 = vfmaq_f32(acc0, a0a1.val[0], v0v1.val[0]);
+            acc1 = vfmaq_f32(acc1, a0a1.val[1], v0v1.val[1]);
+        }
+
+        float sum = vaddvq_f32(vaddq_f32(acc0, acc1));
+
+        // Column tail (n % 8)
+        for (; j < numColumns; ++j) {
+            sum += mPtr[i*numColumns + j] * vPtr[j];
+        }
+
+        dst[i] = sum;
+    }
+#endif
 }
 
 /*
@@ -1516,6 +1542,7 @@ ID_INLINE void idMatX::MultiplyAdd( idVecX& dst, const idVecX& vec ) const
 	const float* mPtr = mat;
 	const float* vPtr = vec.ToFloatPtr();
 	float* dstPtr = dst.ToFloatPtr();
+#if !defined(USE_INTRINSICS_NEON)
 	float* temp = ( float* )_alloca16( numRows * sizeof( float ) );
     #pragma omp simd
 	for( int i = 0; i < numRows; i++ )
@@ -1534,6 +1561,31 @@ ID_INLINE void idMatX::MultiplyAdd( idVecX& dst, const idVecX& vec ) const
 	{
 		dstPtr[i] = temp[i];
 	}
+#else
+    constexpr size_t TILE = 8;
+
+    for (size_t i = 0; i < numRows; ++i) {
+        float32x4_t acc0 = vdupq_n_f32(0.0f);
+        float32x4_t acc1 = vdupq_n_f32(0.0f);
+
+        size_t j = 0;
+        for (; j + TILE <= numColumns; j += TILE) {
+            float32x4x2_t a0a1 = vld1q_f32_x2(mPtr + i*numColumns + j);
+            float32x4x2_t v0v1 = vld1q_f32_x2(vPtr + j);
+            acc0 = vfmaq_f32(acc0, a0a1.val[0], v0v1.val[0]);
+            acc1 = vfmaq_f32(acc1, a0a1.val[1], v0v1.val[1]);
+        }
+
+        float sum = vaddvq_f32(vaddq_f32(acc0, acc1));
+
+        // Column tail (n % 8)
+        for (; j < numColumns; ++j) {
+            sum += mPtr[i*numColumns + j] * vPtr[j];
+        }
+
+        dst[i] += sum;
+    }
+#endif
 }
 
 /*
@@ -1547,6 +1599,7 @@ ID_INLINE void idMatX::MultiplySub( idVecX& dst, const idVecX& vec ) const
 	const float* mPtr = mat;
 	const float* vPtr = vec.ToFloatPtr();
 	float* dstPtr = dst.ToFloatPtr();
+#if !defined(USE_INTRINSICS_NEON)
 	float* temp = ( float* )_alloca16( numRows * sizeof( float ) );
     #pragma omp simd
 	for( int i = 0; i < numRows; i++ )
@@ -1565,6 +1618,32 @@ ID_INLINE void idMatX::MultiplySub( idVecX& dst, const idVecX& vec ) const
 	{
 		dstPtr[i] = temp[i];
 	}
+#else
+    constexpr size_t TILE = 8;
+
+    for (size_t i = 0; i < numRows; ++i) {
+        float32x4_t acc0 = vdupq_n_f32(0.0f);
+        float32x4_t acc1 = vdupq_n_f32(0.0f);
+
+        size_t j = 0;
+        for (; j + TILE <= numColumns; j += TILE) {
+            float32x4x2_t a0a1 = vld1q_f32_x2(mPtr + i*numColumns + j);
+            float32x4x2_t v0v1 = vld1q_f32_x2(vPtr + j);
+            acc0 = vfmaq_f32(acc0, a0a1.val[0], v0v1.val[0]);
+            acc1 = vfmaq_f32(acc1, a0a1.val[1], v0v1.val[1]);
+        }
+
+        float sum = vaddvq_f32(vaddq_f32(acc0, acc1));
+
+        // Column tail (n % 8)
+        for (; j < numColumns; ++j) {
+            sum += mPtr[i*numColumns + j] * vPtr[j];
+        }
+
+        dst[i] -= sum;
+    }
+
+#endif
 }
 
 /*
@@ -1572,7 +1651,6 @@ ID_INLINE void idMatX::MultiplySub( idVecX& dst, const idVecX& vec ) const
 idMatX::TransposeMultiply
 ========================
 */
-/* TODO */
 ID_INLINE void idMatX::TransposeMultiply( idVecX& dst, const idVecX& vec ) const
 {
 	dst.SetSize( numColumns );
