@@ -217,7 +217,54 @@ static float DotProduct_SIMD( const float* src0, const float* src1, const int co
 	float dot;
 	_mm_store_ss( & dot, sum );
 	return dot;
+#elif defined(USE_INTRINSICS_NEON)
+    float32x4_t sum0 = vdupq_n_f32(0.0f);
+    float32x4_t sum1 = vdupq_n_f32(0.0f);
+    int rem = count;
 
+    while (rem >= 8) {
+        float32x4x2_t insA = vld1q_f32_x2(src0);
+        float32x4x2_t insB = vld1q_f32_x2(src1);
+
+        sum0 = vfmaq_f32(sum0, insA.val[0], insB.val[0]);
+        sum1 = vfmaq_f32(sum1, insA.val[1], insB.val[1]);
+
+        src0 += 8;
+        src1 += 8;
+        rem -= 8;
+    }
+
+    if (rem >= 4) {
+        float32x4_t insA = vld1q_f32(src0);
+        float32x4_t insB = vld1q_f32(src1);
+
+        sum0 = vfmaq_f32(sum0, insA, insB);
+        sum1 = vfmaq_f32(sum1, insA, insB);
+
+        src0 += 4;
+        src1 += 4;
+        rem -= 4;
+    }
+
+    if (rem >= 2) {
+        float32x2_t insA = vld1_f32(src0);
+        float32x2_t insB = vld1_f32(src1);
+        
+        float32x2_t prod = vmul_f32(insA, insB);
+        float32x4_t fullProd = vcombine_f32(prod, vdup_n_f32(0.0f));
+        sum0 = vaddq_f32(sum0, fullProd);
+        rem -= 2;
+        src0 += 2;
+        src1 += 2;
+    }
+
+    float sum = vaddvq_f32(vaddq_f32(sum0, sum1));
+
+    if (rem) {
+        sum += *src0 * *src1;
+    }
+
+    return sum;
 #else
 
 	// RB: the old loop caused completely broken rigid body physics and NaN errors
@@ -1538,6 +1585,7 @@ static void GetMaxStep_SIMD( const float* f, const float* a, const float* delta_
 	limit = _mm_cvtsi128_si32( vLimit );
 	limitSide = _mm_cvtsi128_si32( vLimitSide );
 
+//#elif defined(USE_INTRINSICS_NEON)
 #else
 
 	// default to a full step for the current variable
