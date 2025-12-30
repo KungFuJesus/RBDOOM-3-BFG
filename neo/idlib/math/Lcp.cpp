@@ -239,7 +239,6 @@ static float DotProduct_SIMD( const float* src0, const float* src1, const int co
         float32x4_t insB = vld1q_f32(src1);
 
         sum0 = vfmaq_f32(sum0, insA, insB);
-        sum1 = vfmaq_f32(sum1, insA, insB);
 
         src0 += 4;
         src1 += 4;
@@ -252,7 +251,7 @@ static float DotProduct_SIMD( const float* src0, const float* src1, const int co
         
         float32x2_t prod = vmul_f32(insA, insB);
         float32x4_t fullProd = vcombine_f32(prod, vdup_n_f32(0.0f));
-        sum0 = vaddq_f32(sum0, fullProd);
+        sum1 = vaddq_f32(sum1, fullProd);
         rem -= 2;
         src0 += 2;
         src1 += 2;
@@ -261,7 +260,7 @@ static float DotProduct_SIMD( const float* src0, const float* src1, const int co
     float sum = vaddvq_f32(vaddq_f32(sum0, sum1));
 
     if (rem) {
-        sum += *src0 * *src1;
+        sum += ((*src0) * (*src1));
     }
 
     return sum;
