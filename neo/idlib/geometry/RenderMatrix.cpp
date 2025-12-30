@@ -4721,6 +4721,7 @@ void idRenderMatrix::GetFrustumPlanes( idPlane planes[6], const idRenderMatrix& 
 idRenderMatrix::GetFrustumCorners
 ========================
 */
+/* TODO */
 void idRenderMatrix::GetFrustumCorners( frustumCorners_t& corners, const idRenderMatrix& frustumTransform, const idBounds& frustumBounds )
 {
 	assert_16_byte_aligned( &corners );
@@ -4797,7 +4798,70 @@ void idRenderMatrix::GetFrustumCorners( frustumCorners_t& corners, const idRende
 	_mm_store_ps( corners.y + 4, y1 );
 	_mm_store_ps( corners.z + 0, z0 );
 	_mm_store_ps( corners.z + 4, z1 );
+#elif defined(USE_INTRINSICS_NEON)
+    float32x4x4_t mvp03 = vld1q_f32_x4(frustumTransform.m);
+    float32x4_t b0 = vld1q_f32(frustumBounds.ToFloatPtr()); // min x, min y, min z, max x
+    float32x4_t b1 = vld1q_f32(frustumBounds.ToFloatPtr() + 2); // min z, max x, max y , max z
+    float32x4_t v_xy = vreinterpretq_f32_u8(
+        vqtbl2q_u8(uint8x16x2_t{vreinterpretq_u8_f32(b0), vreinterpretq_u8_f32(b1)},
+                   vld1q_u8(vxy_tbl))
+    );
+    float32x4_t vz0 = vdupq_laneq_f32(b0, 2);
+    float32x4_t vz1 = vdupq_laneq_f32(b1, 3);
+    float32x2_t xLow = vget_low_f32(v_xy);
+    float32x4_t vx = vcombine_f32(xLow, xLow);
+    float32x4_t vy = float32x4_t{v_xy[2], v_xy[2], v_xy[3], v_xy[3]};
 
+    float32x4_t parx = vdupq_laneq_f32(mvp03.val[0], 3);
+    float32x4_t pary = vdupq_laneq_f32(mvp03.val[1], 3);
+    float32x4_t parz = vdupq_laneq_f32(mvp03.val[2], 3);
+    float32x4_t parw = vdupq_laneq_f32(mvp03.val[3], 3);
+
+    parx = vfmaq_laneq_f32(parx, vx, mvp03.val[0], 0);
+    pary = vfmaq_laneq_f32(pary, vx, mvp03.val[1], 0);
+    parz = vfmaq_laneq_f32(parz, vx, mvp03.val[2], 0);
+    parw = vfmaq_laneq_f32(parw, vx, mvp03.val[3], 0);
+
+    parx = vfmaq_laneq_f32(parx, vy, mvp03.val[0], 1);
+    pary = vfmaq_laneq_f32(pary, vy, mvp03.val[1], 1);
+    parz = vfmaq_laneq_f32(parz, vy, mvp03.val[2], 1);
+    parw = vfmaq_laneq_f32(parw, vy, mvp03.val[3], 1);
+
+    float32x4_t x0 = vfmaq_laneq_f32(parx, vz0, mvp03.val[0], 2);
+    float32x4_t y0 = vfmaq_laneq_f32(pary, vz0, mvp03.val[1], 2);
+    float32x4_t z0 = vfmaq_laneq_f32(parz, vz0, mvp03.val[2], 2);
+    float32x4_t w0 = vfmaq_laneq_f32(parw, vz0, mvp03.val[3], 2);
+
+    float32x4_t x1 = vfmaq_laneq_f32(parx, vz1, mvp03.val[0], 2);
+    float32x4_t y1 = vfmaq_laneq_f32(pary, vz1, mvp03.val[1], 2);
+    float32x4_t z1 = vfmaq_laneq_f32(parz, vz1, mvp03.val[2], 2);
+    float32x4_t w1 = vfmaq_laneq_f32(parw, vz1, mvp03.val[3], 2);
+
+    /* Can't simply use a min/max, this is to avoid NaNs in RCP so we need a
+     * comparison */
+    float32x4_t smallest_nondenorm = vdupq_n_f32(1.1754944e-038f);
+    uint32x4_t s0 = vcgtq_f32(smallest_nondenorm, w0);
+    uint32x4_t s1 = vcgtq_f32(smallest_nondenorm, w1);
+    float32x4_t one = vdupq_n_f32(1.0f);
+    w0 = vbslq_f32(s0, one, w0); 
+    w1 = vbslq_f32(s1, one, w1); 
+
+    /* rsqrt estimate with a refinement */
+    float32x4_t rw0 = vrsqrteq_f32(w0);
+    float32x4_t rw1 = vrsqrteq_f32(w1);
+
+    rw0 = vmlsq_f32(vaddq_f32(rw0, rw0), vmulq_f32(w0, rw0), rw0);
+    rw1 = vmlsq_f32(vaddq_f32(rw1, rw1), vmulq_f32(w1, rw1), rw1);
+
+    x0 = vmulq_f32(x0, rw0);
+    y0 = vmulq_f32(y0, rw0);
+    z0 = vmulq_f32(z0, rw0);
+    x1 = vmulq_f32(x1, rw1);
+    y1 = vmulq_f32(y1, rw1);
+    z1 = vmulq_f32(z1, rw1);
+
+    vst1q_f32_x4(corners.x, float32x4x4_t{x0, x1, y0, y1});
+    vst1q_f32_x2(corners.z, float32x4x2_t{z0, z1});
 #else
 
 	idVec3 v;
