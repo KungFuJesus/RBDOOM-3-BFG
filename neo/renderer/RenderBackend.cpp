@@ -589,7 +589,7 @@ void idRenderBackend::PrepareStageTexturing( const shaderStage_t* pStage,  const
 		useTexGenParm[2] = 1.0f;
 		useTexGenParm[3] = 1.0f;
 
-		float mat[16];
+		alignas(16) float mat[16];
 		R_MatrixMultiply( surf->space->modelViewMatrix, viewDef->projectionMatrix, mat );
 
 		//RENDERLOG_PRINTF( "TexGen : %s\n", ( pStage->texture.texgen == TG_SCREEN ) ? "TG_SCREEN" : "TG_SCREEN2" );
@@ -1060,6 +1060,8 @@ const int INTERACTION_TEXUNIT_SPECULAR_CUBE1 = 8;
 const int INTERACTION_TEXUNIT_SPECULAR_CUBE2 = 9;
 const int INTERACTION_TEXUNIT_SPECULAR_CUBE3 = 10;
 
+alignas(16) static const float noTexMat[8] = { 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f };
+
 /*
 ==================
 idRenderBackend::SetupInteractionStage
@@ -1094,6 +1096,7 @@ void idRenderBackend::SetupInteractionStage( const shaderStage_t* surfaceStage, 
 	}
 	else
 	{
+#ifndef USE_INTRINSICS_NEON
 		matrix[0][0] = 1.0f;
 		matrix[0][1] = 0.0f;
 		matrix[0][2] = 0.0f;
@@ -1103,10 +1106,14 @@ void idRenderBackend::SetupInteractionStage( const shaderStage_t* surfaceStage, 
 		matrix[1][1] = 1.0f;
 		matrix[1][2] = 0.0f;
 		matrix[1][3] = 0.0f;
+#else
+        float32x4x2_t noTex = vld1q_f32_x2(noTexMat);
+        vst1q_f32_x2(matrix[0].ToFloatPtr(), noTex);
+#endif
 	}
 
-	if( color != NULL )
-	{
+	if( color != NULL ) {
+#ifndef USE_INTRINSICS_NEON
 		for( int i = 0; i < 4; i++ )
 		{
 			// clamp here, so cards with a greater range don't look different.
@@ -1114,6 +1121,21 @@ void idRenderBackend::SetupInteractionStage( const shaderStage_t* surfaceStage, 
 			// it doesn't currently look worth it.
 			color[i] = idMath::ClampFloat( 0.0f, 1.0f, surfaceRegs[surfaceStage->color.registers[i]] ) * lightColor[i];
 		}
+#else
+    /* There's probably a way at parse time to determine if we can use table to swizzle these things... */
+    float32x4_t one = vdupq_n_f32(1.0f);
+    float32x4_t zero = vdupq_n_f32(0.0f);
+    float32x4_t colorVals = {
+        surfaceRegs[surfaceStage->color.registers[0]], 
+        surfaceRegs[surfaceStage->color.registers[1]], 
+        surfaceRegs[surfaceStage->color.registers[2]], 
+        surfaceRegs[surfaceStage->color.registers[3]]
+    };
+    float32x4_t lightColorVec = vld1q_f32(lightColor);
+    colorVals = vmaxq_f32(zero, vminq_f32(one, colorVals));
+    colorVals = vmulq_f32(colorVals, lightColorVec);
+    vst1q_f32(color, colorVals);
+#endif
 	}
 }
 
@@ -1969,7 +1991,7 @@ void idRenderBackend::RenderInteractions( const drawSurf_t* surfList, const view
 				SetVertexParm( RENDERPARM_LOCALVIEWORIGIN, localViewOrigin.ToFloatPtr() );
 
 				// transform the light project into model local space
-				idPlane lightProjection[4];
+				alignas(16) idPlane lightProjection[4];
 				for( int i = 0; i < 4; i++ )
 				{
 					R_GlobalPlaneToLocal( surf->space->modelMatrix, vLight->lightProject[i], lightProjection[i] );
@@ -2971,12 +2993,12 @@ void idRenderBackend::SetupShadowMapMatrices( viewLight_t* vLight, int side, idR
 		viewMatrix[15] = 1;
 
 		// from world space to light origin, looking down the X axis
-		float	unflippedLightViewMatrix[16];
+		alignas(16) float	unflippedLightViewMatrix[16];
 
 		// from world space to OpenGL view space, looking down the negative Z axis
-		float	lightViewMatrix[16];
+		alignas(16) float	lightViewMatrix[16];
 
-		static float	s_flipMatrix[16] =
+		alignas(16) static float	s_flipMatrix[16] =
 		{
 			// convert from our coordinate system (looking down X)
 			// to OpenGL's coordinate system (looking down -Z)
@@ -3005,7 +3027,7 @@ void idRenderBackend::SetupShadowMapMatrices( viewLight_t* vLight, int side, idR
 		const float height = ymax - ymin;
 
 		// from OpenGL view space to OpenGL NDC ( -1 : 1 in XYZ )
-		float lightProjectionMatrix[16];
+		alignas(16) float lightProjectionMatrix[16];
 
 		lightProjectionMatrix[0 * 4 + 0] = -2.0f * zNear / width;
 		lightProjectionMatrix[1 * 4 + 0] = 0.0f;

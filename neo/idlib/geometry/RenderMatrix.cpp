@@ -4690,7 +4690,6 @@ void idRenderMatrix::GetFrustumPlanes( idPlane planes[6], const idRenderMatrix& 
     p3 = vsubq_f32(frustVecs.val[3], frustVecs.val[1]);
     p5 = vsubq_f32(frustVecs.val[3], frustVecs.val[2]);
 
-    /* TODO: vectorize with squared sums and rsqrt (with newton raphsons) */
 	if (normalize) {
         /*
 		for (int i = 0; i < 6; i++) {
@@ -4721,7 +4720,6 @@ void idRenderMatrix::GetFrustumPlanes( idPlane planes[6], const idRenderMatrix& 
 idRenderMatrix::GetFrustumCorners
 ========================
 */
-/* TODO */
 void idRenderMatrix::GetFrustumCorners( frustumCorners_t& corners, const idRenderMatrix& frustumTransform, const idBounds& frustumBounds )
 {
 	assert_16_byte_aligned( &corners );
