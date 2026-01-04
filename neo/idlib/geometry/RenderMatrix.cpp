@@ -4845,11 +4845,11 @@ void idRenderMatrix::GetFrustumCorners( frustumCorners_t& corners, const idRende
     w1 = vbslq_f32(s1, one, w1); 
 
     /* rsqrt estimate with a refinement */
-    float32x4_t rw0 = vrsqrteq_f32(w0);
-    float32x4_t rw1 = vrsqrteq_f32(w1);
+    float32x4_t rw0 = vrecpeq_f32(w0);
+    float32x4_t rw1 = vrecpeq_f32(w1);
 
-    rw0 = vmlsq_f32(vaddq_f32(rw0, rw0), vmulq_f32(w0, rw0), rw0);
-    rw1 = vmlsq_f32(vaddq_f32(rw1, rw1), vmulq_f32(w1, rw1), rw1);
+    rw0 = vmulq_f32(vrecpsq_f32(w0, rw0), rw0);
+    rw1 = vmulq_f32(vrecpsq_f32(w1, rw1), rw1);
 
     x0 = vmulq_f32(x0, rw0);
     y0 = vmulq_f32(y0, rw0);
