@@ -355,7 +355,7 @@ void idRenderProgManager::SetUniformValue( const renderParm_t rp, const float va
     uint32x4_t diff = veorq_u32(vreinterpretq_u32_f32(val_v),
                                 vreinterpretq_u32_f32(uniforms_old));
 
-    uint32_t anyDiff = vaddvq_u32(diff);
+    uint32_t anyDiff = vmaxvq_u32(diff);
     rpChanged = anyDiff;
 
     if (rpChanged) {
