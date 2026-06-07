@@ -177,11 +177,13 @@ void idMaterial::FreeData()
 		// delete any idCinematic textures
 		for( i = 0; i < numStages; i++ )
 		{
+#if !defined( DMAP )
 			if( stages[i].texture.cinematic != NULL )
 			{
 				delete stages[i].texture.cinematic;
 				stages[i].texture.cinematic = NULL;
 			}
+#endif
 			if( stages[i].newStage != NULL )
 			{
 				Mem_Free( stages[i].newStage );
@@ -3573,8 +3575,10 @@ idMaterial::CloseCinematic
 */
 void idMaterial::CloseCinematic() const
 {
+#if !defined( DMAP )
 	for( int i = 0; i < numStages; i++ )
 	{
+        
 		if( stages[i].texture.cinematic )
 		{
 			stages[i].texture.cinematic->Close();
@@ -3582,6 +3586,7 @@ void idMaterial::CloseCinematic() const
 			stages[i].texture.cinematic = NULL;
 		}
 	}
+#endif
 }
 
 /*
